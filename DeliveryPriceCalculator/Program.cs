@@ -10,7 +10,8 @@ internal class Program
 
         ParallelTransformer<GoodParamsModel, GoodPriceModel> pt = new(
             Calculator.Calculate,
-            path);
+            path,
+            parallelismDegree: 10);
 
         await pt.Execute();
     }

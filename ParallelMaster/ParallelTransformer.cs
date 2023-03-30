@@ -1,11 +1,8 @@
-using System.Globalization;
-using System.Text;
 using CsvHelper;
-using CsvHelper.Configuration;
 using ParallelMaster.Extentions;
 
 namespace ParallelMaster;
-public class ParallelTransformer<TInput, TOutput>
+public class ParallelTransformer<TInput, TOutput> : IDisposable
     where TInput : class
     where TOutput : class
 {
@@ -17,13 +14,25 @@ public class ParallelTransformer<TInput, TOutput>
     private readonly object _inputLock = new();
     private readonly object _outputLock = new();
 
+    private Stack<CancellationTokenSource> _cts = new();
+    private List<Task> _tasks = new();
+    private FileWorker _fileWorker;
+
+    public bool IsExecuting { get; set; }
     public uint ParallelismDegree
     {
         get => _parallelismDegree;
         set
         {
-            _parallelismDegree = value;
-            OnParallelismDegreeChanged();
+            if (value > 0)
+            {
+                _parallelismDegree = value;
+            }
+
+            if (IsExecuting)
+            {
+                OnParallelismDegreeChanged();
+            }
         }
     }
 
@@ -36,50 +45,64 @@ public class ParallelTransformer<TInput, TOutput>
         _transformFunction = transformFunction;
         _inputPath = inputPath;
         _outputPath = outputPath ?? inputPath.Insert(inputPath.LastIndexOf('.'), "_calculated");
-        _parallelismDegree = parallelismDegree;
+        ParallelismDegree = parallelismDegree;
+
+        _fileWorker = new(_inputPath, _outputPath);
     }
 
     private void OnParallelismDegreeChanged()
     {
+        var difference = ParallelismDegree - _tasks.Count;
 
+        if (difference > 0)
+        {
+            for (var i = 0; i < difference; i++)
+            {
+                StartNewThread();
+            }
+        }
+
+        if (difference < 0)
+        {
+            for (var i = difference; i >= 0; i++)
+            {
+                _cts.Pop().Cancel();
+            }
+        }
     }
 
     public async Task Execute()
     {
-        var readConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+        IsExecuting = true;
+
+        _fileWorker.CsvReader.Read();
+        _fileWorker.CsvReader.ReadHeader();
+
+        _fileWorker.CsvWriter.UseSnakeCaseHeaders<TOutput>();
+
+        _fileWorker.CsvWriter.WriteHeader<TOutput>();
+        _fileWorker.CsvWriter.NextRecord();
+        _fileWorker.CsvWriter.Flush();
+
+        for (int i = 0; i < ParallelismDegree; i++)
         {
-            PrepareHeaderForMatch = (args) => args.Header.ToLower().Replace("_", ""),
-            Delimiter = ", "
-        };
+            StartNewThread();
+        }
 
-        var writeConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
-        {
-            Delimiter = ", ",
-            HasHeaderRecord = false,
-            Encoding = Encoding.UTF8
-        };
+        await Task.WhenAll(_tasks);
+        _tasks.Clear();
+        _cts.Clear();
+        IsExecuting = false;
+    }
 
-        using var sr = new StreamReader(_inputPath);
-        using var csvReader = new CsvReader(sr, readConfig);
-        using var sw = new StreamWriter(_outputPath, append: false);
-        using var csvWriter = new CsvWriter(sw, writeConfig);
-        csvReader.Read();
-        csvReader.ReadHeader();
-
-        csvWriter.UseSnakeCaseHeaders<TOutput>();
-
-        csvWriter.WriteHeader<TOutput>();
-        csvWriter.NextRecord();
-        csvWriter.Flush();
-
-        var tasks = new List<Task>()
-        {
-            GetTransformTask(csvReader, csvWriter, CancellationToken.None),
-            GetTransformTask(csvReader, csvWriter, CancellationToken.None),
-            GetTransformTask(csvReader, csvWriter, CancellationToken.None)
-        };
-
-        await Task.WhenAll(tasks);
+    private void StartNewThread()
+    {
+        var tokenSource = new CancellationTokenSource();
+        _cts.Push(tokenSource);
+        _tasks.Add(GetTransformTask(
+            _fileWorker.CsvReader,
+            _fileWorker.CsvWriter,
+            tokenSource.Token));
     }
 
     private Task GetTransformTask(
@@ -99,7 +122,6 @@ public class ParallelTransformer<TInput, TOutput>
                         inputRecord = csvReader.GetRecord<TInput>();
                     }
                 }
-
                 if (inputRecord == null) { break; }
 
                 var result = _transformFunction.Invoke(inputRecord);
@@ -112,5 +134,15 @@ public class ParallelTransformer<TInput, TOutput>
                 }
             }
         }, token);
+    }
+
+    public void Dispose()
+    {
+        foreach (var item in _cts)
+        {
+            item.Cancel();
+        }
+        Task.WaitAll(_tasks.ToArray());
+        _fileWorker.Dispose();
     }
 }
