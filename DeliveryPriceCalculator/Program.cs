@@ -1,7 +1,17 @@
+using DeliveryPriceCalculator;
+using DeliveryPriceCalculator.models;
+using ParallelMaster;
+
 internal class Program
 {
-    private static void Main(string[] args)
+    private static async Task Main(string[] args)
     {
-        Console.WriteLine("Hello, World!");
+        var path = Path.Combine(Directory.GetCurrentDirectory(), "input.csv");
+
+        ParallelTask<GoodPriceModel, GoodParamsModel> pt = new(
+            Calculator.Calculate,
+            path);
+
+        pt.Execute();
     }
 }
