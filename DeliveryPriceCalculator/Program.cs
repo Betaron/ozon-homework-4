@@ -8,10 +8,10 @@ internal class Program
     {
         var path = Path.Combine(Directory.GetCurrentDirectory(), "input.csv");
 
-        ParallelTask<GoodPriceModel, GoodParamsModel> pt = new(
+        ParallelTransformer<GoodParamsModel, GoodPriceModel> pt = new(
             Calculator.Calculate,
             path);
 
-        pt.Execute();
+        await pt.Execute();
     }
 }
