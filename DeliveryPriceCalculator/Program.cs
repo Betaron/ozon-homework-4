@@ -11,7 +11,8 @@ internal class Program
         ParallelTransformer<GoodParamsModel, GoodPriceModel> pt = new(
             Calculator.Calculate,
             path,
-            parallelismDegree: 10);
+            parallelismDegree: 10,
+            inputBufferSize: 10);
 
         await pt.Execute();
     }

@@ -4,7 +4,7 @@ using CsvHelper;
 using CsvHelper.Configuration;
 
 namespace ParallelMaster;
-internal class FileWorker : IDisposable
+internal class CsvFileWorker : IDisposable
 {
     private readonly string _inputPath;
     private readonly string _outputPath;
@@ -28,7 +28,7 @@ internal class FileWorker : IDisposable
         Encoding = Encoding.UTF8
     };
 
-    public FileWorker(string inputPath, string outputPath)
+    public CsvFileWorker(string inputPath, string outputPath)
     {
         _inputPath = inputPath;
         _outputPath = outputPath;
