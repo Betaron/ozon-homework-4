@@ -1,5 +1,5 @@
 namespace ParallelMaster.Enums;
-internal enum OperationsTypes
+internal enum OperationType
 {
     Read,
     Calculate,

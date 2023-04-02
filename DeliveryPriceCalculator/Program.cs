@@ -1,3 +1,4 @@
+using System.Configuration;
 using DeliveryPriceCalculator;
 using DeliveryPriceCalculator.models;
 using Microsoft.Extensions.Logging;
@@ -15,9 +16,32 @@ internal class Program
             Calculator.Calculate,
             path,
             parallelismDegree: 10,
-            inputBufferSize: 20,
+            inputBufferSize: 400,
             logger: consoleLogger);
 
-        await pt.Execute();
+        var configtTask = Task.Factory.StartNew(() =>
+        {
+            var sectionName = "appSettings";
+            while (pt.IsExecuting)
+            {
+                try
+                {
+                    ConfigurationManager.RefreshSection("appSettings");
+                    Configuration config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+
+                    var result = uint.Parse(ConfigurationManager.AppSettings["ParallelismDegree"]);
+
+                    if (result != pt.ParallelismDegree)
+                    {
+                        pt.ParallelismDegree = result;
+                    }
+                }
+                finally { Thread.Sleep(1000); }
+            }
+        });
+
+        var exe = pt.Execute();
+        await configtTask;
+        await exe;
     }
 }

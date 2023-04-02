@@ -23,9 +23,9 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
     private BlockingCollection<TInput> _inputBuffer;
     private BlockingCollection<TOutput> _outputBuffer;
     private CsvFileWorker _fileWorker;
-    private Channel<OperationsTypes> _logChanel;
+    private Channel<OperationType> _logChanel;
 
-    private Dictionary<OperationsTypes, ulong> _counters;
+    private Dictionary<OperationType, ulong> _counters;
 
     public Func<TInput, TOutput> TransformFunction { get; init; }
     public string InputPath { get; init; }
@@ -68,22 +68,22 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
         _inputBuffer = new BlockingCollection<TInput>(inputBufferSize);
         _outputBuffer = new BlockingCollection<TOutput>();
         _fileWorker = new(InputPath, OutputPath);
-        _logChanel = Channel.CreateUnbounded<OperationsTypes>(new UnboundedChannelOptions()
+        _logChanel = Channel.CreateUnbounded<OperationType>(new UnboundedChannelOptions()
         {
             SingleReader = true,
             AllowSynchronousContinuations = true,
         });
         _counters = new()
         {
-            { OperationsTypes.Read, 0 },
-            { OperationsTypes.Calculate, 0 },
-            { OperationsTypes.Write, 0 },
+            { OperationType.Read, 0 },
+            { OperationType.Calculate, 0 },
+            { OperationType.Write, 0 },
         };
     }
 
     private void OnParallelismDegreeChanged()
     {
-        var difference = ParallelismDegree - _calculationTasks.Count;
+        var difference = ParallelismDegree - _threadCts.Count;
 
         if (difference > 0)
         {
@@ -95,7 +95,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
         if (difference < 0)
         {
-            for (var i = difference; i >= 0; i++)
+            for (var i = difference; i <= 0; i++)
             {
                 _threadCts.Pop().Cancel();
             }
@@ -112,9 +112,9 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
         IsExecuting = true;
 
-        _counters[OperationsTypes.Read] = 0;
-        _counters[OperationsTypes.Calculate] = 0;
-        _counters[OperationsTypes.Write] = 0;
+        _counters[OperationType.Read] = 0;
+        _counters[OperationType.Calculate] = 0;
+        _counters[OperationType.Write] = 0;
 
         _readInputTask = ReadInBufferAsync(_fileWorker.CsvReader, _readInputCts.Token);
         _writeOutputTask = WriteFromBufferAsync(_fileWorker.CsvWriter, _writeOutputCts.Token);
@@ -127,6 +127,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
         _countTask = CountAndLogAsync(_countCts.Token);
 
         await Task.WhenAll(_calculationTasks);
+
         _outputBuffer.CompleteAdding();
         await _writeOutputTask;
 
@@ -148,7 +149,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
     {
         return Task.Factory.StartNew(() =>
         {
-            var channelWriter = (ChannelWriter<OperationsTypes>)_logChanel;
+            var channelWriter = (ChannelWriter<OperationType>)_logChanel;
 
             while (!_inputBuffer.IsCompleted && !token.IsCancellationRequested)
             {
@@ -160,7 +161,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
                 _outputBuffer.Add(result);
 
-                channelWriter.WriteAsync(OperationsTypes.Calculate);
+                channelWriter.WriteAsync(OperationType.Calculate);
             }
         }, token);
     }
@@ -172,7 +173,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
             csvReader.Read();
             csvReader.ReadHeader();
 
-            var channelWriter = (ChannelWriter<OperationsTypes>)_logChanel;
+            var channelWriter = (ChannelWriter<OperationType>)_logChanel;
 
             while (_fileWorker.CsvReader.Read() && !token.IsCancellationRequested)
             {
@@ -184,7 +185,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
                 _inputBuffer.Add(record);
 
-                channelWriter.WriteAsync(OperationsTypes.Read);
+                channelWriter.WriteAsync(OperationType.Read);
             }
             _inputBuffer.CompleteAdding();
         }, token);
@@ -200,7 +201,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
             csvWriter.NextRecord();
             csvWriter.Flush();
 
-            var channelWriter = (ChannelWriter<OperationsTypes>)_logChanel;
+            var channelWriter = (ChannelWriter<OperationType>)_logChanel;
 
             while (!_outputBuffer.IsCompleted && !token.IsCancellationRequested)
             {
@@ -212,7 +213,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
                 csvWriter.NextRecord();
                 csvWriter.Flush();
 
-                channelWriter.WriteAsync(OperationsTypes.Write);
+                channelWriter.WriteAsync(OperationType.Write);
             }
             channelWriter.Complete();
         }, token);
@@ -221,26 +222,31 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
     private async Task CountAndLogAsync(CancellationToken token)
     {
         var startTime = DateTime.UtcNow.TimeOfDay;
-        var previousType = OperationsTypes.Read;
-        var channelReader = (ChannelReader<OperationsTypes>)_logChanel;
-        while (await channelReader.WaitToReadAsync() && !token.IsCancellationRequested)
+        var previousType = OperationType.Read;
+        var channelReader = (ChannelReader<OperationType>)_logChanel;
+        while (await channelReader.WaitToReadAsync())
         {
-            while (channelReader.TryRead(out OperationsTypes type) && !token.IsCancellationRequested)
+            while (channelReader.TryRead(out OperationType type))
             {
                 if (type != previousType)
                 {
-                    Logger?.LogInformation(string.Format(
-                    "Read: {0}; Calculated: {1}; Written: {2}",
-                    _counters[OperationsTypes.Read],
-                    _counters[OperationsTypes.Calculate],
-                    _counters[OperationsTypes.Write]));
+                    Logger?.LogInformation(CombineLogMessage());
                 }
 
                 _counters[type]++;
             }
         }
-        Logger?.LogInformation($"Total time: {DateTime.UtcNow.TimeOfDay - startTime}");
+        Logger?.LogInformation($"Total time: {DateTime.UtcNow.TimeOfDay - startTime}" +
+            Environment.NewLine +
+            $"Done: {CombineLogMessage()}");
     }
+
+    private string CombineLogMessage() =>
+        string.Format(
+                    "Read: {0}; Calculated: {1}; Written: {2}",
+                    _counters[OperationType.Read],
+                    _counters[OperationType.Calculate],
+                    _counters[OperationType.Write]);
 
     public async void Dispose()
     {
