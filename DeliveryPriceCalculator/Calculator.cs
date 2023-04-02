@@ -13,6 +13,7 @@ internal class Calculator
 
         var resultPrice = Math.Max(volumePrice, weightPrice);
 
+        Thread.Sleep(10000);
         return new(good.Id, resultPrice);
     }
 
