@@ -27,12 +27,40 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
     private Dictionary<OperationType, ulong> _counters;
 
+    /// <summary>
+    /// Функция трансформации данных.
+    /// </summary>
     public Func<TInput, TOutput> TransformFunction { get; init; }
+
+    /// <summary>
+    /// Путь к файлу-источнику входных данных.
+    /// </summary>
     public string InputPath { get; init; }
+
+    /// <summary>
+    /// Путь к файлу, куда будут сохранены результаты вычислений.
+    /// </summary>
     public string OutputPath { get; init; }
+
+    /// <summary>
+    /// Размер буфера для хранения прочитанных данны. Максимум входных данных хранящихся в памяти.
+    /// </summary>
     public int InputBufferSize { get; init; }
+
+    /// <summary>
+    /// Флаг исполнения.
+    /// </summary>
     public bool IsExecuting { get; private set; }
+
+    /// <summary>
+    /// Логгер записывающий данные процесса исполнения.
+    /// </summary>
     public ILogger? Logger { get; set; }
+
+    /// <summary>
+    /// Степень параллелизма. Сколько потоков будет одновременно производить расчеты. <br/>
+    /// Изменение количества потоков применяется, также во время исполнения.
+    /// </summary>
     public uint ParallelismDegree
     {
         get => _parallelismDegree;
@@ -102,6 +130,10 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
         }
     }
 
+    /// <summary>
+    /// Метод запускает применение трансформаций данных в файле.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">В один момент времени может быть запущен только один процесс.</exception>
     public async Task Execute()
     {
         if (IsExecuting)
