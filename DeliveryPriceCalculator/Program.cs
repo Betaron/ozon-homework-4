@@ -8,7 +8,8 @@ internal class Program
 {
     private static async Task Main(string[] args)
     {
-        var path = Path.Combine(Directory.GetCurrentDirectory(), "input.csv");
+        Console.Write("Enter Path: ");
+        var path = Console.ReadLine();
 
         ILogger consoleLogger = new FlatConsoleLogger("Delivery Price Calculator");
 
