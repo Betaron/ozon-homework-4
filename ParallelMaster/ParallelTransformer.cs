@@ -12,11 +12,10 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 {
     private uint _parallelismDegree;
 
-    private Stack<CancellationTokenSource> _threadCts = new();
+    private Queue<(CancellationTokenSource cts, Task task)> _threadCtsTasks = new();
     private CancellationTokenSource _readInputCts = new();
     private CancellationTokenSource _writeOutputCts = new();
     private CancellationTokenSource _countCts = new();
-    private List<Task> _calculationTasks = new();
     private Task _readInputTask;
     private Task _writeOutputTask;
     private Task _countTask;
@@ -111,7 +110,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
     private void OnParallelismDegreeChanged()
     {
-        var difference = ParallelismDegree - _threadCts.Count;
+        var difference = ParallelismDegree - _threadCtsTasks.Count;
 
         if (difference > 0)
         {
@@ -123,9 +122,9 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
         if (difference < 0)
         {
-            for (var i = difference; i <= 0; i++)
+            for (var i = difference; i < 0; i++)
             {
-                _threadCts.Pop().Cancel();
+                _threadCtsTasks.Dequeue().cts.Cancel();
             }
         }
     }
@@ -158,13 +157,12 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
 
         _countTask = CountAndLogAsync(_countCts.Token);
 
-        await Task.WhenAll(_calculationTasks);
+        WaitTransformTasks();
 
         _outputBuffer.CompleteAdding();
         await _writeOutputTask;
 
-        _calculationTasks.Clear();
-        _threadCts.Clear();
+        _threadCtsTasks.Clear();
 
         IsExecuting = false;
     }
@@ -172,12 +170,10 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
     private void StartNewThread()
     {
         var tokenSource = new CancellationTokenSource();
-        _threadCts.Push(tokenSource);
-        _calculationTasks.Add(TransformAsync(tokenSource.Token));
+        _threadCtsTasks.Enqueue((tokenSource, TransformAsync(tokenSource.Token)));
     }
 
-    private Task TransformAsync(
-        CancellationToken token)
+    private Task TransformAsync(CancellationToken token)
     {
         return Task.Factory.StartNew(() =>
         {
@@ -196,6 +192,15 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
                 channelWriter.WriteAsync(OperationType.Calculate);
             }
         }, token);
+    }
+
+    private void WaitTransformTasks()
+    {
+        while (_threadCtsTasks.Count > 0)
+        {
+            _threadCtsTasks.First().task.Wait();
+            _threadCtsTasks.Dequeue();
+        }
     }
 
     private Task ReadInBufferAsync(CsvReader csvReader, CancellationToken token)
@@ -283,14 +288,14 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
     public async void Dispose()
     {
         _readInputCts.Cancel();
-        foreach (var item in _threadCts)
+        foreach (var item in _threadCtsTasks)
         {
-            item.Cancel();
+            item.cts.Cancel();
+            item.task.Wait();
         }
         _writeOutputCts.Cancel();
         _countCts.Cancel();
         await _readInputTask;
-        await Task.WhenAll(_calculationTasks);
         await _writeOutputTask;
         await _countTask;
         _inputBuffer.Dispose();
