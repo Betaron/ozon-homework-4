@@ -8,8 +8,13 @@ internal class Program
 {
     private static async Task Main(string[] args)
     {
-        Console.Write("Enter Path: ");
-        var path = Console.ReadLine();
+        string? path;
+        do
+        {
+            Console.Write("Enter Path: ");
+            path = Console.ReadLine();
+        }
+        while (!File.Exists(path));
 
         ILogger consoleLogger = new FlatConsoleLogger("Delivery Price Calculator");
 
@@ -22,7 +27,6 @@ internal class Program
 
         var configtTask = Task.Factory.StartNew(() =>
         {
-            var sectionName = "appSettings";
             while (pt.IsExecuting)
             {
                 try
