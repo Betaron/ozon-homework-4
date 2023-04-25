@@ -6,7 +6,9 @@ using ParallelMaster.Enums;
 using ParallelMaster.Extentions;
 
 namespace ParallelMaster;
-public class ParallelTransformer<TInput, TOutput> : IDisposable
+
+[Obsolete]
+public class ParallelTransformerV1<TInput, TOutput> : IDisposable
     where TInput : class
     where TOutput : class
 {
@@ -77,7 +79,7 @@ public class ParallelTransformer<TInput, TOutput> : IDisposable
         }
     }
 
-    public ParallelTransformer(
+    public ParallelTransformerV1(
         Func<TInput, TOutput> transformFunction,
         string inputPath,
         string? outputPath = null,
