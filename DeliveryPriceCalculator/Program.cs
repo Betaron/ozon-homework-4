@@ -18,7 +18,7 @@ internal class Program
 
         ILogger consoleLogger = new FlatConsoleLogger("Delivery Price Calculator");
 
-        ParallelTransformer<GoodParamsModel, GoodPriceModel> pt = new(
+        using var pt = new ParallelTransformer<GoodParamsModel, GoodPriceModel>(
             Calculator.Calculate,
             path,
             parallelismDegree: 10,

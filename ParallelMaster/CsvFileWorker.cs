@@ -36,15 +36,15 @@ internal class CsvFileWorker : IDisposable
         _reader = new(_inputPath);
         _writer = new(_outputPath);
 
-        CsvReader = new(_reader, _readConfig);
-        CsvWriter = new(_writer, _writeConfig);
+        CsvReader = new(_reader, _readConfig, leaveOpen: true);
+        CsvWriter = new(_writer, _writeConfig, leaveOpen: true);
     }
 
     public void Dispose()
     {
-        _reader.Dispose();
-        _writer.Dispose();
         CsvReader.Dispose();
         CsvWriter.Dispose();
+        _reader.Dispose();
+        _writer.Dispose();
     }
 }
