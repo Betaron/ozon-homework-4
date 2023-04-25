@@ -204,7 +204,6 @@ public class ParallelTransformerV2<TInput, TOutput>
     {
         return Task.Factory.StartNew(async () =>
         {
-            //await Console.Out.WriteLineAsync(Thread.CurrentThread.Name);
             await foreach (var input in inputReader.ReadAllAsync(token))
             {
                 var result = transform.Invoke(input);
