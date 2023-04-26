@@ -1,58 +1,43 @@
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using ParallelMaster.Enums;
 
 namespace ParallelMaster;
 
 internal class OperationLogger
 {
-    private Dictionary<OperationType, ulong> _counters;
     private readonly ILogger? _logger;
-    private Channel<OperationType> _logChannel =
-        Channel.CreateUnbounded<OperationType>(new UnboundedChannelOptions()
-        {
-            AllowSynchronousContinuations = true,
-            SingleReader = true,
-            SingleWriter = false
-        });
-
-    public ChannelWriter<OperationType> LogWriter { get => _logChannel.Writer; }
+    public CountersEntity Counters;
 
     public OperationLogger(ILogger? logger)
     {
         _logger = logger;
-        _counters = new()
-        {
-            { OperationType.Read, 0 },
-            { OperationType.Calculate, 0 },
-            { OperationType.Write, 0 },
-        };
+        Counters = new();
     }
 
-    private string CombineLogMessage() =>
+    private string CombineLogMessage(CountersEntity counters) =>
         string.Format(
             "Read: {0}; Calculated: {1}; Written: {2}",
-            _counters[OperationType.Read],
-            _counters[OperationType.Calculate],
-            _counters[OperationType.Write]);
+            counters.ReadCounter,
+            counters.CalculateCounter,
+            counters.WriteCounter);
 
     public Task LogProgressAsync(CancellationToken token)
     {
-        return Task.Factory.StartNew(async () =>
+        return Task.Factory.StartNew(() =>
         {
-            var previousType = OperationType.Read;
-
-            await foreach (var type in _logChannel.Reader.ReadAllAsync(token))
+            var currentCounters = Counters with { };
+            while (!token.IsCancellationRequested)
             {
-                if (type != previousType)
+                if (currentCounters == Counters)
                 {
-                    _logger?.LogInformation(CombineLogMessage());
+                    Thread.Sleep(200);
+                    continue;
                 }
-                _counters[type]++;
-                previousType = type;
-            }
+                currentCounters.ReadCounter = Counters.ReadCounter;
+                currentCounters.WriteCounter = Counters.WriteCounter;
+                currentCounters.CalculateCounter = Counters.CalculateCounter;
 
-            _logger?.LogInformation($"Done: {CombineLogMessage()}");
-        }).Unwrap();
+                _logger?.LogInformation(CombineLogMessage(currentCounters));
+            }
+        });
     }
 }

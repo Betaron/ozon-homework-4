@@ -1,6 +1,5 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using ParallelMaster.Enums;
 using ParallelMaster.Extentions;
 
 namespace ParallelMaster;
@@ -9,6 +8,8 @@ public class ParallelTransformerV2<TInput, TOutput>
     where TInput : class
     where TOutput : class
 {
+    private object _countersLock = new();
+
     /// <summary>
     /// Функция трансформации данных.
     /// </summary>
@@ -86,15 +87,18 @@ public class ParallelTransformerV2<TInput, TOutput>
             SingleWriter = false
         });
 
+        var logCts = new CancellationTokenSource();
         var operationLogger = new OperationLogger(Logger);
 
         using var CsvWorker = new CsvFileWorker(InputPath, OutputPath);
+
+        var logTask = operationLogger.LogProgressAsync(logCts.Token);
 
         var readTask = ReadFileAsync(
             CsvWorker,
             inputChannel.Writer,
             stopingToken,
-            operationLogger.LogWriter);
+            operationLogger);
 
         var tasks = new List<Task>();
         for (int i = 0; i < ParallelismDegree; i++)
@@ -104,16 +108,14 @@ public class ParallelTransformerV2<TInput, TOutput>
                 inputChannel.Reader,
                 outputChannel.Writer,
                 stopingToken,
-                operationLogger.LogWriter));
+                operationLogger));
         }
 
         var writeTask = WriteFileAsync(
             CsvWorker,
             outputChannel.Reader,
             stopingToken,
-            operationLogger.LogWriter);
-
-        var logTask = operationLogger.LogProgressAsync(stopingToken);
+            operationLogger);
 
         await readTask;
 
@@ -121,7 +123,7 @@ public class ParallelTransformerV2<TInput, TOutput>
         outputChannel.Writer.Complete();
 
         await writeTask;
-        operationLogger.LogWriter.Complete();
+        logCts.Cancel();
 
         var endTime = DateTime.UtcNow;
 
@@ -136,7 +138,7 @@ public class ParallelTransformerV2<TInput, TOutput>
         CsvFileWorker worker,
         ChannelWriter<TInput> inputWriter,
         CancellationToken token,
-        ChannelWriter<OperationType>? logWriter = null)
+        OperationLogger? operationLogger = null)
     {
         return Task.Factory.StartNew(async () =>
         {
@@ -156,9 +158,12 @@ public class ParallelTransformerV2<TInput, TOutput>
 
                 await inputWriter.WriteAsync(record);
 
-                if (logWriter is not null)
+                if (operationLogger is not null)
                 {
-                    await logWriter.WriteAsync(OperationType.Read);
+                    lock (_countersLock)
+                    {
+                        operationLogger.Counters.ReadCounter++;
+                    }
                 }
             }
             inputWriter.Complete();
@@ -169,7 +174,7 @@ public class ParallelTransformerV2<TInput, TOutput>
         CsvFileWorker worker,
         ChannelReader<TOutput> outputReader,
         CancellationToken token,
-        ChannelWriter<OperationType>? logWriter = null)
+        OperationLogger? operationLogger = null)
     {
         return Task.Factory.StartNew(async () =>
         {
@@ -187,9 +192,12 @@ public class ParallelTransformerV2<TInput, TOutput>
                 writer.NextRecord();
                 writer.Flush();
 
-                if (logWriter is not null)
+                if (operationLogger is not null)
                 {
-                    await logWriter.WriteAsync(OperationType.Write);
+                    lock (_countersLock)
+                    {
+                        operationLogger.Counters.WriteCounter++;
+                    }
                 }
             }
         }).Unwrap();
@@ -200,7 +208,7 @@ public class ParallelTransformerV2<TInput, TOutput>
         ChannelReader<TInput> inputReader,
         ChannelWriter<TOutput> outputWriter,
         CancellationToken token,
-        ChannelWriter<OperationType>? logWriter = null)
+        OperationLogger? operationLogger = null)
     {
         return Task.Factory.StartNew(async () =>
         {
@@ -210,9 +218,12 @@ public class ParallelTransformerV2<TInput, TOutput>
 
                 await outputWriter.WriteAsync(result);
 
-                if (logWriter is not null)
+                if (operationLogger is not null)
                 {
-                    await logWriter.WriteAsync(OperationType.Calculate);
+                    lock (_countersLock)
+                    {
+                        operationLogger.Counters.CalculateCounter++;
+                    }
                 }
             }
         }).Unwrap();
